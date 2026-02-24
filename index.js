@@ -19,7 +19,7 @@ app.post('/api/generate', async (req, res) => {
             return res.status(400).json({ error: 'Промпт не передан' });
         }
 
-        const model = genAI.getGenerativeModel({ model: "gemini-3-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
         
         const result = await model.generateContent(prompt);
         const response = await result.response;
