@@ -1,4 +1,3 @@
-// index.js
 const express = require('express');
 const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -7,10 +6,12 @@ require('dotenv').config();
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+// ВАЖНО: Увеличиваем лимит размера тела запроса для передачи Base64 изображений (до 10 МБ)
+app.use(express.json({ limit: '10mb' }));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// Твой старый эндпоинт для обычных текстовых запросов (оставляем как есть)
 app.post('/api/generate', async (req, res) => {
     try {
         const { prompt } = req.body;
@@ -30,6 +31,61 @@ app.post('/api/generate', async (req, res) => {
     } catch (error) {
         console.error("Ошибка API:", error);
         res.status(500).json({ error: 'Внутренняя ошибка сервера при генерации' });
+    }
+});
+
+// НОВЫЙ эндпоинт для распознавания вещей (в index.js)
+app.post('/api/analyze-item', async (req, res) => {
+    try {
+        const { imageBase64, mimeType = "image/jpeg" } = req.body;
+
+        if (!imageBase64) {
+            return res.status(400).json({ error: 'Изображение не передано' });
+        }
+
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-2.5-flash",
+            generationConfig: { responseMimeType: "application/json" }
+        });
+
+        // Жестко ограничиваем ИИ вашими константами
+        const prompt = `
+        Проанализируй эту одежду по фотографии и верни JSON с её характеристиками.
+        Ты ДОЛЖЕН использовать СТРОГО те значения, которые указаны в списках ниже. Не придумывай ничего своего.
+
+        Допустимые значения:
+        1. category: Строго одно из ["Верх", "Низ", "Обувь", "Верхняя одежда", "Аксессуары"]
+        2. subCategory: В зависимости от выбранной category, выбери строго одно значение:
+           - Если "Верх": ["Футболка", "Рубашка", "Свитер", "Худи", "Пиджак", "Топ"]
+           - Если "Низ": ["Джинсы", "Брюки", "Шорты", "Юбка", "Спортивки"]
+           - Если "Обувь": ["Кроссовки", "Туфли", "Ботинки", "Сапоги", "Сандалии"]
+           - Если "Верхняя одежда": ["Куртка", "Пальто", "Тренч", "Пуховик", "Ветровка"]
+           - Если "Аксессуары": ["Шапка", "Шарф", "Кепка", "Ремень", "Сумка", "Перчатки"]
+        3. style: Строго одно из ["Casual", "Спорт", "Деловой", "Гранж", "Домашний", "Винтаж", "Streetwear", "Минимализм", "Бохо", "Романтичный"]
+        4. warmthLevel: Целое число 1, 2 или 3 (1 - летняя/легкая вещь, 2 - демисезон, 3 - теплая зимняя вещь)
+        5. colorHex: Верни доминирующий цвет вещи в формате Hex (ARGB), без символа # и 0x. Например, "FF000000" для черного, "FFFFFFFF" для белого, "FFFF0000" для красного и т.д.
+
+        Формат ответа (только JSON):
+        {
+          "category": "...",
+          "subCategory": "...",
+          "style": "...",
+          "warmthLevel": 1,
+          "colorHex": "..."
+        }
+        `;
+
+        const imagePart = {
+            inlineData: { data: imageBase64, mimeType: mimeType }
+        };
+
+        const result = await model.generateContent([prompt, imagePart]);
+        const response = await result.response;
+        res.json(JSON.parse(response.text()));
+
+    } catch (error) {
+        console.error("Ошибка API анализа изображения:", error);
+        res.status(500).json({ error: 'Ошибка сервера при распознавании вещи' });
     }
 });
 
