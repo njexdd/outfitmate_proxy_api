@@ -45,7 +45,7 @@ app.post('/api/analyze-item', async (req, res) => {
 
         // 1. ИСПОЛЬЗУЕМ gemini-1.5-flash И УБИРАЕМ generationConfig
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash"
+            model: "gemini-2.5-flash"
         });
 
         const prompt = `
