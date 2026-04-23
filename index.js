@@ -34,7 +34,7 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
-// НОВЫЙ эндпоинт для распознавания вещей (в index.js)
+// НОВЫЙ эндпоинт для распознавания вещей
 app.post('/api/analyze-item', async (req, res) => {
     try {
         const { imageBase64, mimeType = "image/jpeg" } = req.body;
@@ -43,14 +43,13 @@ app.post('/api/analyze-item', async (req, res) => {
             return res.status(400).json({ error: 'Изображение не передано' });
         }
 
+        // 1. ИСПОЛЬЗУЕМ gemini-1.5-flash И УБИРАЕМ generationConfig
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.5-flash",
-            generationConfig: { responseMimeType: "application/json" }
+            model: "gemini-1.5-flash"
         });
 
-        // Жестко ограничиваем ИИ вашими константами
         const prompt = `
-        Проанализируй эту одежду по фотографии и верни JSON с её характеристиками.
+        Проанализируй эту одежду по фотографии и верни ответ СТРОГО в формате JSON.
         Ты ДОЛЖЕН использовать СТРОГО те значения, которые указаны в списках ниже. Не придумывай ничего своего.
 
         Допустимые значения:
@@ -65,7 +64,7 @@ app.post('/api/analyze-item', async (req, res) => {
         4. warmthLevel: Целое число 1, 2 или 3 (1 - летняя/легкая вещь, 2 - демисезон, 3 - теплая зимняя вещь)
         5. colorHex: Верни доминирующий цвет вещи в формате Hex (ARGB), без символа # и 0x. Например, "FF000000" для черного, "FFFFFFFF" для белого, "FFFF0000" для красного и т.д.
 
-        Формат ответа (только JSON):
+        Формат ответа (только JSON без лишнего текста):
         {
           "category": "...",
           "subCategory": "...",
@@ -81,7 +80,13 @@ app.post('/api/analyze-item', async (req, res) => {
 
         const result = await model.generateContent([prompt, imagePart]);
         const response = await result.response;
-        res.json(JSON.parse(response.text()));
+        let text = response.text();
+
+        // 2. ОЧИСТКА ОТ MARKDOWN
+        // Gemini может вернуть JSON обернутым в ```json ... ```. Эта строка удаляет обертку.
+        text = text.replace(/```json|```/g, "").trim();
+
+        res.json(JSON.parse(text));
 
     } catch (error) {
         console.error("Ошибка API анализа изображения:", error);
