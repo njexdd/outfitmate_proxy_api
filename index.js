@@ -51,6 +51,13 @@ app.post('/api/generate', async (req, res) => {
     } catch (error) {
         console.error("Ошибка API:", error);
 
+        if (error?.status === 429 || (error?.message && error.message.includes('429'))) {
+            return res.status(429).json({
+                error: 'Превышен лимит запросов к ИИ. Пожалуйста, подождите и попробуйте позже.',
+                retryable: true
+            });
+        }
+        
         if (error?.status === 503 || error?.message?.includes('503')) {
             return res.status(503).json({
                 error: 'Модель временно перегружена. Попробуйте через несколько секунд.',
@@ -116,6 +123,13 @@ app.post('/api/analyze-item', async (req, res) => {
     } catch (error) {
         console.error("Ошибка API анализа изображения:", error);
 
+        if (error?.status === 429 || (error?.message && error.message.includes('429'))) {
+            return res.status(429).json({
+                error: 'Превышен лимит запросов к ИИ. Пожалуйста, подождите и попробуйте позже.',
+                retryable: true
+            });
+        }
+        
         if (error?.status === 503 || error?.message?.includes('503')) {
             return res.status(503).json({
                 error: 'Модель временно перегружена. Попробуйте через несколько секунд.',
