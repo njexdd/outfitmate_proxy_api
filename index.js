@@ -6,35 +6,63 @@ require('dotenv').config();
 const app = express();
 
 app.use(cors());
-// ВАЖНО: Увеличиваем лимит размера тела запроса для передачи Base64 изображений (до 10 МБ)
 app.use(express.json({ limit: '10mb' }));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Твой старый эндпоинт для обычных текстовых запросов (оставляем как есть)
+// --- Утилита: retry с экспоненциальным backoff ---
+async function withRetry(fn, maxAttempts = 3, baseDelayMs = 1000) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            const is503 = error?.status === 503 ||
+                          error?.message?.includes('503') ||
+                          error?.message?.includes('Service Unavailable');
+
+            if (is503 && attempt < maxAttempts) {
+                const delay = baseDelayMs * Math.pow(2, attempt - 1); // 1s, 2s, 4s...
+                console.warn(`[Retry ${attempt}/${maxAttempts}] 503 ошибка. Повтор через ${delay}ms...`);
+                await new Promise(res => setTimeout(res, delay));
+            } else {
+                throw error; // Пробросить, если не 503 или попытки исчерпаны
+            }
+        }
+    }
+}
+
+// Эндпоинт для обычных текстовых запросов
 app.post('/api/generate', async (req, res) => {
     try {
         const { prompt } = req.body;
-        
+
         if (!prompt) {
             return res.status(400).json({ error: 'Промпт не передан' });
         }
 
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        
-        const result = await model.generateContent(prompt);
+
+        const result = await withRetry(() => model.generateContent(prompt));
         const response = await result.response;
         const text = response.text();
 
         res.json({ result: text });
-        
+
     } catch (error) {
         console.error("Ошибка API:", error);
+
+        if (error?.status === 503 || error?.message?.includes('503')) {
+            return res.status(503).json({
+                error: 'Модель временно перегружена. Попробуйте через несколько секунд.',
+                retryable: true
+            });
+        }
+
         res.status(500).json({ error: 'Внутренняя ошибка сервера при генерации' });
     }
 });
 
-// НОВЫЙ эндпоинт для распознавания вещей
+// Эндпоинт для распознавания вещей
 app.post('/api/analyze-item', async (req, res) => {
     try {
         const { imageBase64, mimeType = "image/jpeg" } = req.body;
@@ -43,10 +71,7 @@ app.post('/api/analyze-item', async (req, res) => {
             return res.status(400).json({ error: 'Изображение не передано' });
         }
 
-        // 1. ИСПОЛЬЗУЕМ gemini-1.5-flash И УБИРАЕМ generationConfig
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-2.5-flash"
-        });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const prompt = `
         Проанализируй эту одежду по фотографии и верни ответ СТРОГО в формате JSON.
@@ -80,18 +105,24 @@ app.post('/api/analyze-item', async (req, res) => {
             inlineData: { data: imageBase64, mimeType: mimeType }
         };
 
-        const result = await model.generateContent([prompt, imagePart]);
+        const result = await withRetry(() => model.generateContent([prompt, imagePart]));
         const response = await result.response;
         let text = response.text();
 
-        // 2. ОЧИСТКА ОТ MARKDOWN
-        // Gemini может вернуть JSON обернутым в ```json ... ```. Эта строка удаляет обертку.
         text = text.replace(/```json|```/g, "").trim();
 
         res.json(JSON.parse(text));
 
     } catch (error) {
         console.error("Ошибка API анализа изображения:", error);
+
+        if (error?.status === 503 || error?.message?.includes('503')) {
+            return res.status(503).json({
+                error: 'Модель временно перегружена. Попробуйте через несколько секунд.',
+                retryable: true
+            });
+        }
+
         res.status(500).json({ error: 'Ошибка сервера при распознавании вещи' });
     }
 });
